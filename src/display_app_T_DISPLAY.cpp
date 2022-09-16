@@ -1,0 +1,202 @@
+#include "define.h"
+#if defined(LILYGO_TDisplay)
+#define LGFX_TTGO_TDISPLAY         // TTGO T-Display
+#define LGFX_USE_V1
+#include <LovyanGFX.hpp>
+#include <LGFX_AUTODETECT.hpp>
+#include "display_app.hpp"
+#if !defined(UNUSE_U8G2FONT)
+#include <clib/u8g2.h>  // フォントのみ利用 https://github.com/olikraus/u8g2/wiki/fntlistall
+static const lgfx::U8g2font u8g2font1( u8g2_font_helvR18_tn );
+#endif
+
+#define TFT_WIDTH   240
+#define TFT_HEIGHT  135
+
+#include <stdint.h>
+#undef U8G2_FONT_SECTION
+#define U8G2_FONT_SECTION(name) 
+#include "u8g2_font_FreeSans.h"
+static const lgfx::U8g2font u8g2font92(u8g2_font_FreeSansBoldOblique92pt7b);
+static const lgfx::U8g2font u8g2font32(u8g2_font_FreeSansBoldOblique32pt7b);
+static const lgfx::U8g2font u8g2font40(u8g2_font_FreeSansBoldOblique40pt7b);
+
+LGFX display;
+LGFX_Sprite canvas(&display);
+
+#include "obd2_app.hpp"
+
+int fontsize = 44;
+int fontsize2 = 24;
+int y1_base = fontsize * 1 - 1; // 1行目ベースライン
+int y2_base = fontsize * 2 - 1; // 2行目ベースライン
+int y3_base = y2_base + fontsize2 * 1 - 2; // 3行目ベースライン
+int y4_base = y2_base + fontsize2 * 2 - 2; // 4行目ベースライン
+int backlight = 128;
+bool br_chg_ena = false;
+int br_chg_cnt = 0;
+
+extern float fuel_percent_fix;
+
+void DrawCounter(int line, float val, int format, int rx);
+void DrawParameter(String PreWord, float value, String SufWord, int warn, int dpt = -1);
+
+void display_init() {
+  display.init();
+  display.setColorDepth(8);
+  display.setRotation(3);
+  display.setBrightness(backlight - 1);
+  canvas.setColorDepth(8);
+  canvas.createSprite(TFT_WIDTH, TFT_HEIGHT);
+  canvas.setTextWrap(false);
+  canvas.setColor(TFT_WHITE);
+  canvas.setTextColor(TFT_WHITE);
+  canvas.fillScreen(TFT_NAVY);
+
+  canvas.setFont(&fonts::Font4);
+  canvas.setCursor(0, 5);
+  canvas.println(" Shift Indicator");
+  canvas.println(" ISO 15765-4");
+  canvas.println("  (CAN 11/500)");
+  canvas.drawRect(0, 0, TFT_WIDTH, TFT_HEIGHT, TFT_WHITE);  // 描画領域確認用
+  canvas.pushSprite(0, 0);
+}
+
+void display_inpane_draw(int rpm, int kmh, int shift_pos) {
+  int x_base = 180;
+
+  canvas.clear();
+  canvas.setTextSize(1);
+  canvas.setTextWrap(false);
+  canvas.setTextColor(TFT_WHITE);
+  if (br_chg_ena == true) {
+    br_chg_ena = false;
+    if (backlight == 1) {
+      backlight = 256;
+    } else {
+      backlight /= 2;
+    }
+    br_chg_cnt = 100;
+    display.setBrightness(backlight - 1);
+  }
+
+  DrawCounter(0, rpm, 0, x_base);
+  DrawCounter(1, kmh, 0, x_base);
+
+  canvas.setFont(&fonts::FreeSansBoldOblique12pt7b);
+  canvas.setTextDatum(textdatum_t::baseline_left);
+  canvas.drawString("rpm", x_base, y1_base);
+  canvas.drawString("km/h", x_base, y2_base);
+
+  // シフト位置表示
+  canvas.setFont(&u8g2font92);
+  canvas.setTextDatum(textdatum_t::baseline_left);
+  // canvas.drawRect(0, 44, 80, 90, TFT_WHITE);
+  canvas.setCursor(0 - 2, y4_base - 2);
+  canvas.setTextColor(TFT_SKYBLUE);
+  canvas.print(shift_pos);
+  canvas.setTextColor(TFT_WHITE);
+
+  canvas.setCursor(77, y3_base);
+  DrawParameter("燃", fuel_percent_fix, "%", 17, 10);
+  canvas.setCursor(77, y4_base);
+  DrawParameter("DPF", obd2_dpf_gen, "g", -99, 100);
+  canvas.setCursor(172, y3_base);
+  DrawParameter("SOC", obd2_batt_soc, "%", -99);
+  canvas.setCursor(172, y4_base);
+  DrawParameter("水", obd2_eng_temp, "℃", -99);
+
+  if (br_chg_cnt > 0) {
+    canvas.setTextDatum(textdatum_t::top_right);
+    canvas.setFont(&fonts::Font4);
+    canvas.drawString(String(backlight), TFT_WIDTH, 0);
+    br_chg_cnt--;
+  }
+
+  if (wificnt > 0) {
+    canvas.setTextDatum(textdatum_t::top_right);
+    canvas.setFont(&fonts::Font0);
+    char wificntbuf[9];
+    sprintf(wificntbuf, "%8X", wificnt);
+    canvas.drawString(String(wificntbuf), TFT_WIDTH, 0);
+  }
+
+  // canvas.drawRect(0, 0, TFT_WIDTH, TFT_HEIGHT, TFT_WHITE);  // レイアウト確認用
+  // canvas.drawFastHLine(0, y1_base, TFT_WIDTH, TFT_WHITE); // レイアウト確認用
+  // canvas.drawFastHLine(0, y2_base, TFT_WIDTH, TFT_WHITE); // レイアウト確認用
+  // canvas.drawFastHLine(0, y3_base, TFT_WIDTH, TFT_WHITE); // レイアウト確認用
+  // canvas.drawFastHLine(0, y4_base, TFT_WIDTH, TFT_WHITE); // レイアウト確認用
+  canvas.pushSprite(0, 0);
+}
+
+void display_brightness_shift() {
+  br_chg_ena = true;
+}
+
+/**
+ * @brief カウンタ表示
+ * 
+ * @param line 描画行
+ * @param val 描画値
+ * @param format 少数点位置
+ * @param rx 右寄せ位置
+ */
+void DrawCounter(int line, float val, int format, int rx)
+{
+  String Str_set;
+  char str[32];
+  int num_size;   // 数字フォント基準幅（フォント毎に固定：調整不可）
+  int dot_size;   // 小数点フォント幅（フォント毎に固定：調整不可）
+  int x_adj;      // x軸右寄せ調整値（フォント毎に固定：調整不可）
+
+  int line_space; // 行間隔
+  int y_offset;   // Y軸オフセット
+
+  if (format == 0) {
+    Str_set = String((int)val);
+  } else {
+    Str_set = String(val, format);
+  }
+  Str_set.toCharArray(str, sizeof(str));
+
+  canvas.setTextColor(TFT_WHITE);
+  canvas.setTextDatum(textdatum_t::top_left);
+
+  canvas.setFont(&u8g2font32); num_size = 32;  dot_size = 16;  x_adj = 9;
+  line_space = 44;
+  y_offset = 1;
+
+  canvas.drawString(str, rx - (strlen(str) * num_size) - (format ? 0 : dot_size) + x_adj, (line * line_space) + y_offset);
+}
+
+void DrawParameter(String PreWord, float value, String SufWord, int warn, int dpt)
+{
+  String str_val;
+  int int_val = (int)value;
+
+  canvas.setTextColor(TFT_WHITE);
+  if (value == -99) {
+    str_val = "--";
+  } else {
+    if (dpt == -1) {
+      str_val = String(int_val);
+    } else {
+      str_val = String(int_val) + "." + String((int)((value - int_val) * dpt));
+    }
+    if (value < warn) {
+      canvas.setTextColor(TFT_RED, TFT_WHITE);
+    }
+  }
+  canvas.setFont(&fonts::lgfxJapanGothic_20);
+  canvas.print(PreWord);
+#if !defined(UNUSE_U8G2FONT)
+  canvas.setFont(&u8g2font1);
+#else
+  canvas.setFont(&fonts::Font4);
+#endif
+  canvas.print(str_val);
+  canvas.setFont(&fonts::lgfxJapanGothic_20);
+  canvas.print(SufWord);
+  canvas.setTextColor(TFT_WHITE);
+}
+#endif
